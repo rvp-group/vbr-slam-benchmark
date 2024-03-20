@@ -1,3 +1,3 @@
-g++ -o vbr_benchmark vbr_benchmark.cpp -I /usr/include/eigen3
+compile: ```g++ -o vbr_benchmark vbr_benchmark.cpp -I /usr/include/eigen3```
 
-./vbr_benchmark gt/ orbslam/
+run: ```./vbr_benchmark gt/ orbslam/```
