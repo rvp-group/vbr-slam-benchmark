@@ -10,15 +10,26 @@
 // some const
 const float MAX_ERROR = 10;
 const std::vector<float> PERCENTAGES = {0.01, 0.02, 0.03, 0.05, 0.08, 0.13, 0.21, 0.34, 0.55};
-const std::vector<std::string> SEQ_NAMES = {
-    "campus_train_0",
-    "campus_train_1",
-    "ciampino_train_0",
-    "ciampino_train_1",
-    "colosseo_train",
-    "piazza_di_spagna_train",
-    "pincio_train",
-    "diag_train"};
+const std::vector<std::string> SEQ_TRAIN_NAMES = {
+      "campus_train0",
+      "campus_train1",      
+      "ciampino_train0",
+      "ciampino_train1",
+      "colosseo_train0",
+      "diag_train0",
+      "pincio_train0",
+      "spagna_train0"
+      };
+const std::vector<std::string> SEQ_TEST_NAMES = {
+      "campus_test0",
+      "campus_test1",
+      "ciampino_test0",
+      "ciampino_test1",
+      "colosseo_test0",
+      "diag_test0",
+      "pincio_test0",
+      "spagna_test0",
+      };
 
 struct Error
 {
@@ -59,11 +70,23 @@ inline std::vector<Pose> loadPoses(const std::string &file_name)
 
   while (!file.eof())
   {
-    Eigen::Isometry3f P = Eigen::Isometry3f::Identity();
+    std::string line;
+    std::getline(file, line);
+
+    if (line.empty() || line[0] == '#')
+      continue;
+
+    std::istringstream iss(line);
     float t, x, y, z, qx, qy, qz, qw;
-    file >> t >> x >> y >> z >> qx >> qy >> qz >> qw;
-    if (file.eof())
-      break;
+    if (!(iss >> t >> x >> y >> z >> qx >> qy >> qz >> qw))
+    {
+      std::cerr << "error reading line from file: " << line << std::endl;
+      continue; // Skip this line if unable to read values
+    }
+
+    Eigen::Isometry3f P = Eigen::Isometry3f::Identity();
+    // float t, x, y, z, qx, qy, qz, qw;
+    // file >> t >> x >> y >> z >> qx >> qy >> qz >> qw;
 
     P.translation() << x, y, z;
 
@@ -276,16 +299,24 @@ inline void computeRank(std::vector<Stats> &stats, const std::string &path_to_re
             << std::endl;
 }
 
-inline void eval(const std::string &path_to_gt, const std::string &path_to_es)
+inline void eval(const std::string &path_to_gt, const std::string &path_to_es, const std::string &eval_type)
 {
-  const std::string path_to_result = path_to_es + "/results";
+  const std::string path_to_result = path_to_es + "/results/" + eval_type;
   system(("mkdir -p " + path_to_result).c_str());
+
+  std::vector<std::string> seq_names;
+  if (eval_type == "train")
+    seq_names = SEQ_TRAIN_NAMES;
+  else if (eval_type == "test")
+    seq_names = SEQ_TEST_NAMES;
+  else
+    return;
 
   std::vector<Stats> rpe_stats;
   std::vector<Stats> ate_stats;
-  for (size_t i = 0; i < SEQ_NAMES.size(); ++i)
+  for (size_t i = 0; i < seq_names.size(); ++i)
   {
-    const std::string sequence_name = SEQ_NAMES[i];
+    const std::string sequence_name = seq_names[i];
     const std::string path_to_gt_file = path_to_gt + "/" + sequence_name + "_gt.txt";
     const std::string path_to_es_file = path_to_es + "/" + sequence_name + "_es.txt";
 
@@ -316,10 +347,10 @@ inline void eval(const std::string &path_to_gt, const std::string &path_to_es)
     ate_stats.push_back(ate_stat);
   }
 
-  std::cout << "stats RPE (sequence, t_err [%], r_err [deg/m]):" << std::endl;
+  std::cout << eval_type << " stats RPE (sequence, t_err [%], r_err [deg/m]):" << std::endl;
   computeRank(rpe_stats, path_to_result + "/results_rpe.txt", path_to_result + "/rank_rpe.txt");
 
-  std::cout << "stats ATE RMSE (sequence, t_err [m], r_err [deg]):" << std::endl;
+  std::cout << eval_type << " stats ATE RMSE (sequence, t_err [m], r_err [deg]):" << std::endl;
   computeRank(ate_stats, path_to_result + "/results_ate.txt", path_to_result + "/rank_ate.txt");
 }
 
@@ -334,7 +365,8 @@ int main(int argc, char *argv[])
   const std::string &path_to_gt = argv[1];
   const std::string &path_to_es = argv[2];
 
-  eval(path_to_gt, path_to_es);
+  eval(path_to_gt, path_to_es, "train");
+  eval(path_to_gt, path_to_es, "test");
 
   return 0;
 }
