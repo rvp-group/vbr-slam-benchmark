@@ -11,24 +11,24 @@
 const float MAX_ERROR = 10;
 const std::vector<float> PERCENTAGES = {0.01, 0.02, 0.03, 0.05, 0.08, 0.13, 0.21, 0.34, 0.55};
 const std::vector<std::string> SEQ_TRAIN_NAMES = {
+      "colosseo_train0",
       "campus_train0",
-      "campus_train1",      
+      "campus_train1",
+      "pincio_train0",
+      "spagna_train0",
+      "diag_train0",
       "ciampino_train0",
       "ciampino_train1",
-      "colosseo_train0",
-      "diag_train0",
-      "pincio_train0",
-      "spagna_train0"
       };
 const std::vector<std::string> SEQ_TEST_NAMES = {
+      "colosseo_test0",
       "campus_test0",
       "campus_test1",
-      "ciampino_test0",
-      "ciampino_test1",
-      "colosseo_test0",
-      "diag_test0",
       "pincio_test0",
       "spagna_test0",
+      "diag_test0",
+      "ciampino_test0",
+      "ciampino_test1",
       };
 
 struct Error
@@ -269,7 +269,7 @@ inline Stats computeSequenceATE(const std::vector<Pose> &poses_gt, const std::ve
 
 inline void computeRank(std::vector<Stats> &stats, const std::string &path_to_result_file, const std::string &path_to_rank_file)
 {
-  sort(stats.begin(), stats.end(), sortComparator);
+  // sort(stats.begin(), stats.end(), sortComparator);
 
   FILE *fp = fopen(path_to_result_file.c_str(), "w");
 
