@@ -1,3 +1,32 @@
+// BSD 3-Clause License
+
+// Copyright (c) 2024, Robots Vision and Perception Group
+
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
+
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 #include <iostream>
 #include <fstream>
 #include <stdio.h>
@@ -6,6 +35,7 @@
 #include <limits>
 #include <algorithm>
 #include <Eigen/Dense>
+#include <iomanip>
 
 // some const
 const float MAX_ERROR = 10;
@@ -37,6 +67,19 @@ struct Error
   double r_err, t_err;
   float len;
   Error(int first_frame, double r_err, double t_err, float len) : first_frame(first_frame), r_err(r_err), t_err(t_err), len(len) {}
+};
+
+struct ErrorPair
+{
+  double r_err = 0.;
+  double t_err = 0.;
+  ErrorPair() = default;
+  ErrorPair(double r_err, double t_err) : r_err(r_err), t_err(t_err) {}
+
+  void operator+=(const ErrorPair& e) {
+    r_err += e.r_err;
+    t_err += e.t_err;
+  } 
 };
 
 struct Stats
@@ -231,26 +274,42 @@ inline std::vector<Pose> computeAlignedEstimate(const std::vector<Pose> &poses_g
   return poses_es_aligned;
 }
 
-inline Stats computeSequenceRPE(const std::vector<Error> &seq_err, const std::string &sequence_name)
+inline std::pair<Stats, std::vector<ErrorPair>> computeSequenceRPE(const std::vector<Error> &seq_err, const std::string &sequence_name, size_t num_poses)
 {
   double t_err = 0;
   double r_err = 0;
 
+  std::vector<ErrorPair> RPE_errors;
+  RPE_errors.resize(num_poses);
+  std::vector<int> count;
+  count.resize(num_poses);
+
   for (const Error &error : seq_err)
   {
+    RPE_errors[error.first_frame] += ErrorPair(error.r_err, error.t_err);
+    count[error.first_frame]++;
     t_err += error.t_err;
     r_err += error.r_err;
   }
 
+  for (size_t i = 0; i < num_poses; ++i) {
+    if(!count[i])
+      continue;
+    RPE_errors[i].r_err /= count[i];
+    RPE_errors[i].t_err /= count[i];
+  }
+
   const double r_rpe = r_err / double(seq_err.size());
   const double t_rpe = 100 * t_err / double(seq_err.size());
-  return Stats(sequence_name, r_rpe, t_rpe);
+  return std::make_pair(Stats(sequence_name, r_rpe, t_rpe), RPE_errors);
 }
 
-inline Stats computeSequenceATE(const std::vector<Pose> &poses_gt, const std::vector<Pose> &poses_es_aligned, const std::string &sequence_name)
+inline std::pair<Stats, std::vector<ErrorPair>> computeSequenceATE(const std::vector<Pose> &poses_gt, const std::vector<Pose> &poses_es_aligned, const std::string &sequence_name)
 {
   double r_sum = 0;
   double t_sum = 0;
+  std::vector<ErrorPair> ATE_errors;
+  ATE_errors.reserve(poses_gt.size());
 
   for (size_t i = 0; i < poses_gt.size(); ++i)
   {
@@ -258,13 +317,15 @@ inline Stats computeSequenceATE(const std::vector<Pose> &poses_gt, const std::ve
     const double r_err = rotationError(pose_error);
     const double t_err = translationError(pose_error);
 
+    ATE_errors.push_back(ErrorPair(r_err, t_err));
+
     r_sum += r_err;
     t_sum += t_err;
   }
 
   const double r_ate_rmse = std::sqrt(r_sum / double(poses_gt.size()));
   const double t_ate_rmse = std::sqrt(t_sum / double(poses_gt.size()));
-  return Stats(sequence_name, r_ate_rmse, t_ate_rmse);
+  return std::make_pair(Stats(sequence_name, r_ate_rmse, t_ate_rmse), ATE_errors);
 }
 
 inline void computeRank(std::vector<Stats> &stats, const std::string &path_to_result_file, const std::string &path_to_rank_file)
@@ -299,7 +360,123 @@ inline void computeRank(std::vector<Stats> &stats, const std::string &path_to_re
             << std::endl;
 }
 
-inline void eval(const std::string &path_to_gt, const std::string &path_to_es, const std::string &eval_type)
+// Copyright 2019 ETH Zürich, Thomas Schöps
+void WriteTrajectorySVG(
+    std::ofstream& stream,
+    int plot_size_in_pixels,
+    const Eigen::Vector3f& min_vec,
+    const Eigen::Vector3f& max_vec,
+    const std::vector<Pose>& trajectory,
+    const std::string& color,
+    const float stroke_width,
+    int dimension1,
+    int dimension2) {
+  constexpr double kTimestampHoleThreshold = 0.07;
+  
+  std::ostringstream stroke_width_stream;
+  stroke_width_stream << stroke_width;
+  std::string stroke_width_string = stroke_width_stream.str();
+  
+  std::ostringstream half_stroke_width_stream;
+  half_stroke_width_stream << (0.5 * stroke_width);
+  std::string half_stroke_width_string = half_stroke_width_stream.str();
+  
+  bool within_polyline = false;
+  
+  for (std::size_t i = 0; i < trajectory.size() - 1; ++ i) {
+    const Eigen::Vector3f& point = trajectory[i].transform.translation();
+    Eigen::Vector3f plot_point = plot_size_in_pixels * (point - min_vec).cwiseQuotient(max_vec - min_vec);
+    
+    // Is the segment [i, i + 1] valid (or is it a hole)?
+    bool segment_valid = (trajectory[i+1].timestamp - trajectory[i].timestamp <= kTimestampHoleThreshold);
+    
+    if (!segment_valid && !within_polyline) {
+      stream << "<circle cx=\"" << plot_point.coeff(dimension1) << "\" cy=\"" << plot_point.coeff(dimension2) << "\" r=\"" << half_stroke_width_string << "\" fill=\"" << color << "\"/>\n";
+      continue;
+    }
+    
+    if (segment_valid && !within_polyline) {
+      // Start new polyline
+      stream << "<polyline points=\"";
+      within_polyline = true;
+    } else {
+      // Write the space between two points
+      stream << " ";
+    }
+    
+    stream << plot_point.coeff(dimension1) << "," << plot_point.coeff(dimension2);
+    
+    if (!segment_valid && within_polyline) {
+      // End polyline
+      stream << "\" stroke=\"" << color << "\" stroke-width=\"" << stroke_width_string << "\" fill=\"none\" />\n";
+      within_polyline = false;
+    }
+  }
+  
+  if (within_polyline) {
+    // End polyline
+    stream << "\" stroke=\"" << color << "\" stroke-width=\"" << stroke_width_string << "\" fill=\"none\" />\n";
+    // within_polyline = false;
+  }
+}
+
+// Copyright 2019 ETH Zürich, Thomas Schöps
+void PlotTrajectories(
+    const std::string& path,
+    int plot_size_in_pixels,
+    const std::vector<Pose>& ground_truth,
+    const std::vector<Pose>& aligned_estimate,
+    int dimension1,
+    int dimension2) {
+  std::ofstream stream(path, std::ios::out);
+  
+  stream << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+  stream << "<svg width=\"" << plot_size_in_pixels << "\" height=\"" << plot_size_in_pixels
+                          << "\" viewBox=\"0 0 " << plot_size_in_pixels << " " << plot_size_in_pixels
+                          << "\" xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\">\n";
+  
+  // Determine plot extent based on the ground truth trajectory
+  Eigen::Vector3f min_vec = Eigen::Vector3f::Constant(std::numeric_limits<double>::infinity());
+  Eigen::Vector3f max_vec = Eigen::Vector3f::Constant(-1 * std::numeric_limits<double>::infinity());
+
+  for (std::size_t i = 0; i < ground_truth.size(); ++ i) {
+    min_vec = min_vec.cwiseMin(ground_truth[i].transform.translation());
+    max_vec = max_vec.cwiseMax(ground_truth[i].transform.translation());
+  }
+
+  for (std::size_t i = 0; i < aligned_estimate.size(); ++ i) {
+    min_vec = min_vec.cwiseMin(aligned_estimate[i].transform.translation());
+    max_vec = max_vec.cwiseMax(aligned_estimate[i].transform.translation());
+  }
+  
+  float largest_size = (max_vec - min_vec).maxCoeff();
+  Eigen::Vector3f center = 0.5 * (min_vec + max_vec);
+  constexpr float kSizeExtensionFactor = 1.1f;
+  min_vec = center - 0.5 * Eigen::Vector3f::Constant(kSizeExtensionFactor * largest_size);
+  max_vec = center + 0.5 * Eigen::Vector3f::Constant(kSizeExtensionFactor * largest_size);
+  
+  // Plot ground truth trajectory
+  WriteTrajectorySVG(stream, plot_size_in_pixels, min_vec, max_vec, ground_truth, "green", 1, dimension1, dimension2);
+  
+  // Plot estimated trajectory
+  WriteTrajectorySVG(stream, plot_size_in_pixels, min_vec, max_vec, aligned_estimate, "red", 1, dimension1, dimension2);
+  
+  stream << "</svg>\n";
+  
+  stream.close();
+}
+
+inline void dumpError(const std::string& path, const std::vector<ErrorPair>& errors, const std::vector<Pose>& poses_es) {
+  std::ofstream file(path);
+  file << "# ts rotation(deg) translation(m)" << std::endl;
+  for (size_t i = 0; i < poses_es.size(); ++i) {
+    file << poses_es[i].timestamp << " " << errors[i].r_err << " " << errors[i].t_err << std::endl;
+  }
+
+  file.close();
+}
+
+inline void eval(const std::string &path_to_gt, const std::string &path_to_es, const std::string &eval_type, bool plot)
 {
   const std::string path_to_result = path_to_es + "/results/" + eval_type;
   system(("mkdir -p " + path_to_result).c_str());
@@ -339,12 +516,39 @@ inline void eval(const std::string &path_to_gt, const std::string &path_to_es, c
               << std::endl;
 
     const std::vector<Error> seq_err = computeSequenceErrors(poses_gt, poses_es);
-    const Stats rpe_stat = computeSequenceRPE(seq_err, sequence_name);
+    const auto [rpe_stat, RPE_errors] = computeSequenceRPE(seq_err, sequence_name, poses_es.size());
     rpe_stats.push_back(rpe_stat);
 
     const std::vector<Pose> poses_es_aligned = computeAlignedEstimate(poses_gt, poses_es);
-    const Stats ate_stat = computeSequenceATE(poses_gt, poses_es_aligned, sequence_name);
+    const auto [ate_stat, ATE_errors] = computeSequenceATE(poses_gt, poses_es_aligned, sequence_name);
     ate_stats.push_back(ate_stat);
+
+    if (plot) {
+      constexpr int kPlotSize = 600;  // in pixels; this is the default display size of the SVGs
+      PlotTrajectories(
+          path_to_result + "/" + sequence_name + "_top.svg",
+          kPlotSize,
+          poses_gt,
+          poses_es_aligned,
+          0,
+          1);
+      PlotTrajectories(
+          path_to_result + "/" + sequence_name + "_front.svg",
+          kPlotSize,
+          poses_gt,
+          poses_es_aligned,
+          0,
+          2);
+      PlotTrajectories(
+          path_to_result + "/" + sequence_name + "_side.svg",
+          kPlotSize,
+          poses_gt,
+          poses_es_aligned,
+          1,
+          2);
+      dumpError(path_to_result + "/" + sequence_name + "_ate.txt", ATE_errors, poses_es);
+      dumpError(path_to_result + "/" + sequence_name + "_rpe.txt", RPE_errors, poses_es);
+    }
   }
 
   std::cout << eval_type << " stats RPE (sequence, t_err [%], r_err [deg/m]):" << std::endl;
@@ -356,17 +560,19 @@ inline void eval(const std::string &path_to_gt, const std::string &path_to_es, c
 
 int main(int argc, char *argv[])
 {
-  if (argc != 3)
+  if (argc < 3)
   {
-    std::cout << "usage: ./vbr_benchmark path_to_gt path_to_es" << std::endl;
+    std::cout << "usage: ./vbr_benchmark path_to_gt path_to_es [--plot]" << std::endl;
     return 1;
   }
 
   const std::string &path_to_gt = argv[1];
   const std::string &path_to_es = argv[2];
 
-  eval(path_to_gt, path_to_es, "train");
-  eval(path_to_gt, path_to_es, "test");
+  bool plot = (argc > 3 && std::string(argv[3]) == "--plot");
+
+  eval(path_to_gt, path_to_es, "train", plot);
+  eval(path_to_gt, path_to_es, "test", plot);
 
   return 0;
 }
