@@ -466,9 +466,14 @@ void PlotTrajectories(
   stream.close();
 }
 
-inline void dumpError(const std::string& path, const std::vector<ErrorPair>& errors, const std::vector<Pose>& poses_es) {
+inline void dumpError(const std::string& path, const std::vector<ErrorPair>& errors, const std::vector<Pose>& poses_es, bool rpe=false) {
   std::ofstream file(path);
-  file << "# ts rotation(deg) translation(m)" << std::endl;
+
+  if(rpe)
+    file << "# ts rotation(%) translation(%)" << std::endl;
+  else
+    file << "# ts rotation(deg) translation(m)" << std::endl;
+
   for (size_t i = 0; i < poses_es.size(); ++i) {
     file << poses_es[i].timestamp << " " << errors[i].r_err << " " << errors[i].t_err << std::endl;
   }
@@ -547,7 +552,7 @@ inline void eval(const std::string &path_to_gt, const std::string &path_to_es, c
           1,
           2);
       dumpError(path_to_result + "/" + sequence_name + "_ate.txt", ATE_errors, poses_es);
-      dumpError(path_to_result + "/" + sequence_name + "_rpe.txt", RPE_errors, poses_es);
+      dumpError(path_to_result + "/" + sequence_name + "_rpe.txt", RPE_errors, poses_es, true);
     }
   }
 
@@ -573,6 +578,8 @@ int main(int argc, char *argv[])
 
   eval(path_to_gt, path_to_es, "train", plot);
   eval(path_to_gt, path_to_es, "test", plot);
+
+  std::cout << "If you are running this at home, you do not have test set ground truth, so ignore error messages related to test!" << std::endl;
 
   return 0;
 }
